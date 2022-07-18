@@ -1,13 +1,16 @@
 <?php
 require __DIR__ . "/ale_import_cats.php";
+require __DIR__ . "/ale_import_products.php";
 
 class AleImportCli
 {
     /* DELETE FROM `wp_terms` WHERE term_id >27 */
     private $catsImport;
+    private $productsImport;
 
     public function __construct(){
         $this->catsImport = new AleImportCats(50);
+        $this->productsImport = new AleImportProducts(30);
     } 
 
 
@@ -17,12 +20,18 @@ class AleImportCli
     }
 
 
-    public function import()
+    public function importCats() {
+        $path = __DIR__ . '/product_info_uk.json' ;
+        $jsonString = json_decode(file_get_contents($path), true);
+        $this->catsImport->insertCats($jsonString);
+    }
+
+    public function importProducts()
     {
         $path = __DIR__ . '/product_info_uk.json' ;
         $jsonString = json_decode(file_get_contents($path), true);
-        $cats = $this->catsImport->insertCats($jsonString);
 
-        /* WP_CLI::line( 'Hello World!' ); */
+        $this->productsImport->insertProducts($jsonString);
+
     }
 }
