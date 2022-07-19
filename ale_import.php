@@ -4,7 +4,7 @@ require __DIR__ . "/ale_import_products.php";
 
 class AleImportCli
 {
-    /* DELETE FROM `wp_terms` WHERE term_id >27 */
+//    DELETE FROM `wp_terms` WHERE term_id >27 ; DELETE FROM `wp_term_taxonomy` WHERE term_id >27 
     private $catsImport;
     private $productsImport;
 
@@ -19,6 +19,10 @@ class AleImportCli
         $this->catsImport->deleteCats();
     }
 
+    public function deleteProducts()
+    {
+        $this->productsImport->deleteProducts();
+    }
 
     public function importCats() {
         $path = __DIR__ . '/product_info_uk.json' ;

@@ -12,10 +12,12 @@ class AleImportCats
     public function insertCats($jsonString)
     {
         $cats = $this->getCats($jsonString);
-        if (!$cats) return;
+        if (!$cats) {
+            return;
+        }
 
         $cats = $this->insertTerms($cats);
-        
+
         $this->insertTermMeta($cats);
 
         $this->insertTaxonomyData($cats);
