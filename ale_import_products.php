@@ -86,7 +86,7 @@ class AleImportProducts
         foreach ($products as &$product) {
             $product['foreign_id'] = $product['id'];
             $product['id'] = $this->getProductIdByForeignId($insertedPosts, $product['foreign_id']);
-            
+
             $product['foreign_category_id'] = $product['category_id'];
             $product['category_id'] = $categories[$product['category_id']] ?? 0;
             $product['_stock_status'] = 'instock';
@@ -98,10 +98,11 @@ class AleImportProducts
         return $products;
     }
 
-    public function getProductsCategoriesFromDb($products) {
+    public function getProductsCategoriesFromDb($products)
+    {
         global $wpdb;
         $sql = "SELECT term_id, meta_value FROM " .$wpdb->termmeta . " WHERE meta_key='foreign_id'";
-        $categories = array_column($wpdb->get_results($sql), 'term_id','meta_value');
+        $categories = array_column($wpdb->get_results($sql), 'term_id', 'meta_value');
         return $categories;
     }
 
@@ -159,45 +160,58 @@ class AleImportProducts
 
         $products = $this->insertPosts($products);
         $this->insertMeta($products);
-        $this->insertCategory($products); 
+        $this->insertCategory($products);
     }
 
-    public function getTermTaxonomyIds($products) {
+    public function getTermTaxonomyIds($products)
+    {
         global $wpdb;
         $in = implode(", ", array_unique(array_column($products, 'category_id')));
         $sql = "SELECT term_id, term_taxonomy_id FROM " . $wpdb->term_taxonomy . " WHERE term_id IN (". $in . ")";
-        $tt = array_column($wpdb->get_results($sql), 'term_taxonomy_id','term_id');
+        $tt = array_column($wpdb->get_results($sql), 'term_taxonomy_id', 'term_id');
         return $tt;
     }
 
-    public function insertCategory($products) {
-
+    public function insertCategory($products)
+    {
         global $wpdb;
         $tt = $this->getTermTaxonomyIds($products);
         $chunks = array_chunk($products, $this->productsChunks*2);
+        $countsProductsInCat = [];
         foreach ($chunks as $chunk) {
             $catsData = [];
             $catsPlaceHolders=[];
             foreach ($chunk as $product) {
                 $catsData[] = $product['id'];
                 $catsData[] =  $tt[$product['category_id']];
+                if (isset($countsProductsInCat[$product['category_id']])) {
+                    $countsProductsInCat[$product['category_id']] += 1 ;
+                } else {
+                    $countsProductsInCat[$product['category_id']] = 1 ;
+                }
                 $catsData[] =  0;
                 $catsPlaceHolders[] = "('%s', '%s', '%s')";
             }
             if ($catsData) {
                 $sql = "INSERT INTO $wpdb->term_relationships (object_id, term_taxonomy_id, term_order) VALUES "  ;
                 $sql .= implode(', ', $catsPlaceHolders) . ' ';
-                print_r($wpdb->prepare($sql, $catsData));
+                /* print_r($wpdb->prepare($sql, $catsData)); */
                 $wpdb->query($wpdb->prepare($sql, $catsData));
             }
         }
-
-	/* clean_term_cache( $terms, '', false ); */
-	/* wp_cache_delete( $object_id, $taxonomy . '_relationships' ); */
-	/* wp_cache_delete( 'last_changed', 'terms' ); */
-
-
-	       
+        if ($countsProductsInCat) {
+            $case ='';
+            $in = implode(',', array_keys($countsProductsInCat));
+            foreach ($countsProductsInCat as $termId=>$count) {
+                $case .= " WHEN {$termId} THEN count + {$count} ";
+            }
+            $sql = "UPDATE  {$wpdb->term_taxonomy}  SET count  = (CASE term_id {$case} END) WHERE term_id IN ( {$in}  )";
+            print_r($sql);
+            $wpdb->query($sql);
+        }
+        /* clean_term_cache( $terms, '', false ); */
+    /* wp_cache_delete( $object_id, $taxonomy . '_relationships' ); */
+    /* wp_cache_delete( 'last_changed', 'terms' ); */
     }
 
     public function deleteProducts()
@@ -217,7 +231,7 @@ class AleImportProducts
             }
 
             $i++;
-            if ($i >3) {
+            if ($i >20) {
                 break;
             }
             $products[] =  $jsonProduct;
