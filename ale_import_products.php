@@ -1,12 +1,15 @@
 <?php
+require __DIR__ . "/ale_import_attributes.php";
 
 class AleImportProducts
 {
     private $productsChunks;
+    private $importAttributes;
 
     public function __construct($productsChunks = 20)
     {
         $this->productsChunks = $productsChunks;
+        $this->importAttributes = new AleImportAttributes(30);
     }
 
     public function insertProducts($jsonString)
@@ -16,217 +19,12 @@ class AleImportProducts
             return;
         }
 
-
-
-
         $products = $this->insertPosts($products);
+        /* print_r($products); */
         $this->insertMeta($products);
-        $this->insertAttributes($products);
-        /* $this->insertCategory($products); */
+        $this->importAttributes->insertAttributes($products);
+        $this->insertCategory($products);
     }
-
-    private function sanitizeTaxName($attr)
-    {
-        $taxName = wc_sanitize_taxonomy_name(stripslashes(substr($this->translit($attr), 0, 20)));
-        return $taxName;
-    }
-
-    private function insertAttributes($products)
-    {
-        global $wpdb;
-        $attrsArr = [];
-        foreach ($products as $product) {
-            foreach ($product['properties']['property'] as $propArr) {
-                $attr = $propArr['name'];
-                $value = $propArr['value'];
-                /* if (!isset($attrsArr[$attr][$value])) { */
-                /* $attrsArr[$attr] = []; */
-                /* } */
-
-                /* if (!in_array($value, $attrsArr[$attr])) { */
-                $attrsArr[$attr][$value][] = $product['id'];
-                /* } */
-            }
-        }
-
-        $chunks = array_chunk(array_keys($attrsArr), $this->productsChunks/2);
-        foreach ($chunks as $attrs) {
-            $attrsData = [];
-            $attrsPlaceHolders=[];
-            foreach ($attrs as $attr) {
-                $attrsData[] = $attr;
-                $attrsData[] =  $this->sanitizeTaxName($attr);
-                $attrsData[] =  'select';
-                $attrsData[] =  "menu_order";
-                $attrsData[] =  0;
-                $attrsPlaceHolders[] = "('%s', '%s', '%s' ,'%s','%s')";
-            }
-
-            if ($attrsData) {
-                $sql = "INSERT INTO  {$wpdb->prefix}woocommerce_attribute_taxonomies  (
-                    attribute_label,  attribute_name , attribute_type , attribute_orderby ,attribute_public ) VALUES " ;
-
-                $sql .= implode(', ', $attrsPlaceHolders) . ' ';
-                $wpdb->query($wpdb->prepare($sql, $attrsData));
-            }
-        }
-        $termsAttrs = $this->insertAttrsTerms($attrsArr);
-        $termsAttrs = $this->insertTaxonomyData($termsAttrs);
-        /* print_r($termsAttrs); */
-        /* die; */
-        delete_transient('wc_attribute_taxonomies');
-        WC_Cache_Helper::invalidate_cache_group('woocommerce-attributes');
-        $this->bindAttrsToProducts($termsAttrs);
-    }
-
-
-    private function bindAttrsToProducts($termsAttrs)
-    {
-        global $wpdb;
-
-        $chunks = array_chunk($termsAttrs, $this->productsChunks/4);
-        foreach ($chunks as $attrs) {
-            $attrsData = [];
-            $attrsPlaceHolders=[];
-            foreach ($attrs as $attr) {
-                foreach ($attr['productsIds'] as $productId) {
-                    $attrsData[] = $productId;
-                    $attrsData[] = $attr['tt_id'];
-                    $attrsPlaceHolders[] = "('%s', '%s' )";
-                }
-            }
-            if ($attrsData) {
-                $sql = "INSERT INTO  {$wpdb->term_relationships} (
-                    object_id,  term_taxonomy_id   ) VALUES " ;
-
-                $sql .= implode(', ', $attrsPlaceHolders) . ' ';
-                $wpdb->query($wpdb->prepare($sql, $attrsData));
-            }
-        }
-    }
-
-    private function insertTaxonomyData($termsAttrs)
-    {
-        global $wpdb;
-        $chunks = array_chunk($termsAttrs, $this->productsChunks);
-        foreach ($chunks as $chunk) {
-            $taxonomyData = [];
-            $taxonomy_place_holders=[];
-            foreach ($chunk as $tt) {
-                /* print_r($tt); */
-
-                /* if (!$cat['inserted']) { */
-                /* continue; */
-                /* } */
-
-                $taxonomy_place_holders[] = "('%d', '%s', '%d')";
-                $taxonomyData[] = $tt['id'];
-                $taxonomyData[] = $tt['taxonomy'];
-                $taxonomyData[] = 0;
-            }
-            if ($taxonomyData) {
-                $sql = "INSERT INTO " . $wpdb->term_taxonomy . "(term_id, taxonomy, parent) VALUES " ;
-                $sql .= implode(', ', $taxonomy_place_holders);
-                $result = $wpdb->query($wpdb->prepare($sql, $taxonomyData));
-            }
-        }
-
-        $tt = $this->getAttrsTermTaxonomyIds($termsAttrs);
-        foreach ($termsAttrs as &$attr) {
-            $attr['tt_id'] = $tt[$attr['id']];
-        }
-        unset($attr);
-        return $termsAttrs;
-    }
-
-    private function getAttrsTermTaxonomyIds($termAttrs)
-    {
-        global $wpdb;
-        $in = implode(", ", array_unique(array_column($termAttrs, 'id')));
-        $sql = "SELECT term_id, term_taxonomy_id FROM " . $wpdb->term_taxonomy . " WHERE term_id IN (". $in . ")";
-        $tt = array_column($wpdb->get_results($sql), 'term_taxonomy_id', 'term_id');
-        return $tt;
-    }
-
-    private function insertAttrsTerms($attrsArr)
-    {
-
-        /* $dbCats = $this->getAllDbCats() ; */
-        $termsAttrs = [];
-        foreach ($attrsArr as $attrName=>$termsArr) {
-            foreach ($termsArr as $t=>$prodIds) {
-                $name = wp_unslash($t);
-                $slug = sanitize_title($name);
-                if (in_array($slug, array_column($termsAttrs, 'slug'))) {
-                    continue;
-                }
-                $termsAttrs[] = [
-                    'taxonomy'=> 'pa_' . $this->sanitizeTaxName($attrName),
-                    'name' => $name,
-                    'slug'=> $slug,
-                    'productsIds'=>$prodIds,
-                ];
-            }
-        }
-        global $wpdb;
-        $terms = [];
-        $chunks = array_chunk($termsAttrs, $this->productsChunks/2);
-        $select_place_holders=[] ;
-        $insertedSlugs = [];
-        foreach ($chunks as $chunk) {
-            $termsData = [];
-            $terms_place_holders=[];
-            foreach ($chunk as $attr) {
-                /* if ($this->getCatIdBySlug($dbCats, $cat['slug'])) { */
-                /* continue; */
-                /* } */
-
-                $select_place_holders[] = "'%s'";
-                $insertedSlugs[] = $attr['slug'];
-                $termsData[] = $attr['name'];
-                $termsData[] = $attr['slug'];
-                $terms_place_holders[] = "('%s', '%s')";
-            }
-
-            if ($termsData) {
-                $sql = "INSERT INTO " . $wpdb->terms . "(name, slug) VALUES " ;
-                $sql .= implode(', ', $terms_place_holders) . ' ';
-                $wpdb->query($wpdb->prepare($sql, $termsData));
-            }
-        }
-
-        $terms = [];
-        if ($insertedSlugs) {
-            $sql = "SELECT term_id, slug FROM " . $wpdb->terms . " WHERE slug IN( " .  implode(", ", $select_place_holders) .  ")";
-            $terms = $wpdb->get_results($wpdb->prepare($sql, $insertedSlugs), ARRAY_A) ;
-        }
-        /* $terms = array_merge($dbCats, $terms); */
-
-        $termsAttrs = $this->addDataToTermAttrs($termsAttrs, $terms);
-        return $termsAttrs;
-    }
-
-    private function addDataToTermAttrs($termsAttrs, $terms)
-    {
-        foreach ($termsAttrs as &$termAttr) {
-            $termAttr['id'] = $this->getTermIdBySlug($terms, $termAttr['slug']);
-        }
-        unset($termAttr);
-        return $termsAttrs;
-    }
-
-    private function getTermIdBySlug($terms, $slug)
-    {
-        if (!$slug) {
-            return null;
-        }
-
-        $key = array_search($slug, array_column($terms, 'slug'));
-        if ($key !== false) {
-            return $terms[$key]['term_id'];
-        }
-    }
-
 
     public function deleteProducts()
     {
@@ -281,8 +79,6 @@ class AleImportProducts
 
     private function formatProduct($product)
     {
-        /* 'post_date'      => gmdate('Y-m-d H:i:s', $product->get_date_created('edit')->getOffsetTimestamp()), */
-        /* 'post_date_gmt'  => gmdate('Y-m-d H:i:s', $product->get_date_created('edit')->getTimestamp()), */
         $post = [
             'post_type'      => 'product',
             'post_status'    => 'publish',
@@ -302,16 +98,17 @@ class AleImportProducts
         return array_values($post);
     }
 
-    private function getProductIdByForeignId($posts, $foreign_id)
-    {
-        $key = array_search($foreign_id, array_column($posts, 'post_name'));
-        if ($key !== false) {
-            return $posts[$key]['ID'];
-        }
+    private function getImportedProductsIds() {
+
+        global $wpdb;
+        $sql = "SELECT post_id,meta_value  FROM " . $wpdb->postmeta . " WHERE meta_key='foreign_id' ";
+        return array_column($wpdb->get_results($sql),'meta_value','post_id') ;
+
     }
 
     private function insertPosts($products)
     {
+        $dbPosts = $this->getImportedProductsIds();
         global $wpdb;
         $chunks = array_chunk($products, $this->productsChunks);
         $selectPlaceHolders=[] ;
@@ -320,6 +117,9 @@ class AleImportProducts
             $productsData = [];
             $productsPlaceHolders=[];
             foreach ($chunk as $product) {
+                if(in_array($product['id'], $dbPosts) )
+                    continue;
+
                 /* if ($this->getCatIdBySlug($dbCats, $cat['slug'])) { */
                 /* continue; */
                 /* } */
@@ -350,47 +150,7 @@ class AleImportProducts
         return $products;
     }
 
-    private function productsAddFields($products, $insertedPosts)
-    {
-        $categories = $this->getProductsCategoriesFromDb($products);
-        foreach ($products as &$product) {
-            $product['foreign_id'] = $product['id'];
-            $product['id'] = $this->getProductIdByForeignId($insertedPosts, $product['foreign_id']);
 
-            $product['foreign_category_id'] = $product['category_id'];
-            $product['category_id'] = $categories[$product['category_id']] ?? 0;
-            $product['_stock_status'] = 'instock';
-            if ($product['stock'] == 'no') {
-                $product['_stock_status'] = 'outofstock';
-            }
-        }
-        unset($product);
-        return $products;
-    }
-
-    private function getProductsCategoriesFromDb($products)
-    {
-        global $wpdb;
-        $sql = "SELECT term_id, meta_value FROM " .$wpdb->termmeta . " WHERE meta_key='foreign_id'";
-        $categories = array_column($wpdb->get_results($sql), 'term_id', 'meta_value');
-        return $categories;
-    }
-
-    private function clearProductsCache()
-    {
-        /* wp_cache_delete( $post->ID, 'posts' ); */
-        /* wp_cache_delete( $post->ID, 'post_meta' ); */
-
-        /* clean_object_term_cache( $post->ID, $post->post_type ); */
-
-        /* wp_cache_delete( 'wp_get_archives', 'general' ); */
-
-        /* _wc_recount_terms_by_product($product->get_id()); */
-        /* wp_cache_set('last_changed', microtime(), 'posts'); */
-                /* clean_term_cache( $terms, '', false ); */
-    /* wp_cache_delete( $object_id, $taxonomy . '_relationships' ); */
-    /* wp_cache_delete( 'last_changed', 'terms' ); */
-    }
 
     private function insertMeta($products)
     {
@@ -409,6 +169,9 @@ class AleImportProducts
             $metaData = [];
             $metaPlaceHolders=[];
             foreach ($chunk as $product) {
+                if(!$product['inserted'])
+                    continue;
+
                 foreach ($metaFields as $k=>$v) {
                     $metaData[] = $product['id'];
                     $metaData[] =  $k;
@@ -424,15 +187,6 @@ class AleImportProducts
         }
     }
 
-    private function getTermTaxonomyIds($products)
-    {
-        global $wpdb;
-        $in = implode(", ", array_unique(array_column($products, 'category_id')));
-        $sql = "SELECT term_id, term_taxonomy_id FROM " . $wpdb->term_taxonomy . " WHERE term_id IN (". $in . ")";
-        $tt = array_column($wpdb->get_results($sql), 'term_taxonomy_id', 'term_id');
-        return $tt;
-    }
-
     private function insertCategory($products)
     {
         global $wpdb;
@@ -443,6 +197,8 @@ class AleImportProducts
             $catsData = [];
             $catsPlaceHolders=[];
             foreach ($chunk as $product) {
+                if(!$product['inserted'])
+                    continue;
                 $catsData[] = $product['id'];
                 $catsData[] =  $tt[$product['category_id']];
                 if (isset($countsProductsInCat[$product['category_id']])) {
@@ -471,6 +227,66 @@ class AleImportProducts
     }
 
 
+    private function productsAddFields($products, $insertedPosts)
+    {
+        $categories = $this->getProductsCategoriesFromDb($products);
+        foreach ($products as &$product) {
+            $product['foreign_id'] = $product['id'];
+            $product['id'] = $this->getProductIdByForeignId($insertedPosts, $product['foreign_id']);
+            
+            $product['inserted'] = $product['id'] ? true : false;
+            
+            $product['foreign_category_id'] = $product['category_id'];
+            $product['category_id'] = $categories[$product['category_id']] ?? 0;
+            $product['_stock_status'] = 'instock';
+            if ($product['stock'] == 'no') {
+                $product['_stock_status'] = 'outofstock';
+            }
+        }
+        unset($product);
+        return $products;
+    }
+
+    private function getProductIdByForeignId($posts, $foreign_id)
+    {
+        $key = array_search($foreign_id, array_column($posts, 'post_name'));
+        if ($key !== false) {
+            return $posts[$key]['ID'];
+        }
+    }
+
+    private function getTermTaxonomyIds($products)
+    {
+        global $wpdb;
+        $in = implode(", ", array_unique(array_column($products, 'category_id')));
+        $sql = "SELECT term_id, term_taxonomy_id FROM " . $wpdb->term_taxonomy . " WHERE term_id IN (". $in . ")";
+        $tt = array_column($wpdb->get_results($sql), 'term_taxonomy_id', 'term_id');
+        return $tt;
+    }
+
+    private function getProductsCategoriesFromDb($products)
+    {
+        global $wpdb;
+        $sql = "SELECT term_id, meta_value FROM " .$wpdb->termmeta . " WHERE meta_key='foreign_id'";
+        $categories = array_column($wpdb->get_results($sql), 'term_id', 'meta_value');
+        return $categories;
+    }
+
+    private function clearProductsCache()
+    {
+        /* wp_cache_delete( $post->ID, 'posts' ); */
+        /* wp_cache_delete( $post->ID, 'post_meta' ); */
+
+        /* clean_object_term_cache( $post->ID, $post->post_type ); */
+
+        /* wp_cache_delete( 'wp_get_archives', 'general' ); */
+
+        /* _wc_recount_terms_by_product($product->get_id()); */
+        /* wp_cache_set('last_changed', microtime(), 'posts'); */
+                /* clean_term_cache( $terms, '', false ); */
+    /* wp_cache_delete( $object_id, $taxonomy . '_relationships' ); */
+    /* wp_cache_delete( 'last_changed', 'terms' ); */
+    }
 
     private function getProducts($jsonString)
     {
@@ -493,10 +309,4 @@ class AleImportProducts
         return $products;
     }
 
-    public function translit($str)
-    {
-        $rus = array('І','і','Ї','ї', 'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ё', 'Ж', 'З', 'И', 'Й', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С', 'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ', 'Ъ', 'Ы', 'Ь', 'Э', 'Ю', 'Я', 'а', 'б', 'в', 'г', 'д', 'е', 'ё', 'ж', 'з', 'и', 'й', 'к', 'л', 'м', 'н', 'о', 'п', 'р', 'с', 'т', 'у', 'ф', 'х', 'ц', 'ч', 'ш', 'щ', 'ъ', 'ы', 'ь', 'э', 'ю', 'я');
-        $lat = array('I','i','I','i','A', 'B', 'V', 'G', 'D', 'E', 'E', 'Gh', 'Z', 'I', 'Y', 'K', 'L', 'M', 'N', 'O', 'P', 'R', 'S', 'T', 'U', 'F', 'H', 'C', 'Ch', 'Sh', 'Sch', 'Y', 'Y', 'Y', 'E', 'Yu', 'Ya', 'a', 'b', 'v', 'g', 'd', 'e', 'e', 'gh', 'z', 'i', 'y', 'k', 'l', 'm', 'n', 'o', 'p', 'r', 's', 't', 'u', 'f', 'h', 'c', 'ch', 'sh', 'sch', 'y', 'y', 'y', 'e', 'yu', 'ya');
-        return str_replace($rus, $lat, $str);
-    }
 }

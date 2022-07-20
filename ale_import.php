@@ -4,7 +4,7 @@ require __DIR__ . "/ale_import_products.php";
 
 class AleImportCli
 {
-//    DELETE FROM `wp_terms` WHERE term_id >27 ; DELETE FROM `wp_term_taxonomy` WHERE term_id >27 
+//    DELETE FROM `wp_terms` WHERE term_id >27 ; DELETE FROM `wp_term_taxonomy` WHERE term_id >27; DELETE  FROM `wp_woocommerce_attribute_taxonomies` WHERE attribute_id > 3 
     private $catsImport;
     private $productsImport;
 
