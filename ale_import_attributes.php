@@ -86,6 +86,7 @@ class AleImportAttributes
                 continue;
             }
             foreach ($product['properties']['property'] as $propArr) {
+                //TODO
                 $attr = $propArr['name'];
                 $value = $propArr['value'];
                 $attrsArr[$attr][$value][] = $product['id'];

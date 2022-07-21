@@ -301,7 +301,7 @@ class AleImportProducts
 
             $i++;
             if ($i >5) {
-                break;
+                /* break; */
             }
             $products[] =  $jsonProduct;
         }
